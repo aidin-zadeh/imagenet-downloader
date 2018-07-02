@@ -1,6 +1,7 @@
 import os, sys, inspect
 import argparse
 import time
+import logging as log
 from socket import timeout as TimeoutError
 from socket import error as SocketError
 import http
@@ -31,15 +32,18 @@ class ImagenetDownloader(object):
                  sleep=0.8,
                  input_encoding=None,
                  synset_wnids_url=None,
+                 synset_maps_url=None,
                  synset_original_url=None,
-                 verbose=True,
-                 filename=None,):
+                 verbose=True,):
 
         self.path = path
         self._input_encoding = input_encoding
         if synset_wnids_url is None:
             synset_wnids_url = "http://www.image-net.org/api/text/imagenet.synset.obtain_synset_list"
         self._synset_wnids_url = synset_wnids_url
+        if synset_maps_url is None:
+            synset_maps_url = "http://image-net.org/archive/words.txt"
+        self._synset_maps_url = synset_maps_url
         if synset_original_url is None:
             synset_original_url = "http://www.image-net.org/download/synset"
         self._synset_original_url = synset_original_url
@@ -49,14 +53,23 @@ class ImagenetDownloader(object):
         self.sleep = sleep
 
         self.verbose = verbose
-        self.verboseprint = print if self.verbose else lambda *a, **k: None
+        if self.verbose:
+            log.basicConfig(format="%(levelname)s: %(message)s", level=log.DEBUG)
+        else:
+            log.basicConfig(format="%(levelname)s: %(message)s")
+        # self.verboseprint = print if self.verbose else lambda *a, **k: None
 
-        self.get_wnid_list(filename)
+        self.get_wnid_list()
+        self.get_wnid_maps()
 
     def get_wnids(self, filename=None, release="latest", src="stanford"):
+        if not self.path:
+            os.mkdir(os.path.join(self.path))
+        else:
+            log.info(f"Appending over to {self.path}. The out path already exists!")
 
         if filename is None:
-            filename = os.path.join(ROOT_DIR, "data", "int", "synset_list.txt")
+            filename = os.path.join(CURR_DIR, "data", "int", "synset_list.txt")
 
         with open(filename, "rb") as f:
             cnt = 0
@@ -78,17 +91,18 @@ class ImagenetDownloader(object):
             release=release,
             src=src
         )
-        self.verboseprint(f"Downloading WIND '{wnid}'", end="")
-        url = self.build_url(self._synset_original_url + "?", params_extra=params)
-        content = self.download_wnid(url)
-        self.verboseprint("completed.")
-        if not os.path.isdir(os.path.join(self.path, "imagenet")):
-            os.mkdir(os.path.join(self.path, "imagenet"))
+        filename = os.path.join(self.path, wnid + ".tar")
 
-        fname = os.path.join(self.path, "imagenet", wnid + ".tar")
-        with open(fname, "wb") as f:
-            f.write(content)
-        return fname
+        if not os.path.isfile(filename):
+            log.info(f"Downloading WNDI '{wnid}'..")
+            url = self.build_url(self._synset_original_url + "?", params_extra=params)
+            content = self.download_wnid(url)
+
+            with open(filename, "wb") as f:
+                f.write(content)
+        else:
+            log.info(f"Skipping WNID '{wnid}'. The tar file already exists!")
+        return filename
 
     def download_wnid(self, url):
         count = 0
@@ -111,17 +125,27 @@ class ImagenetDownloader(object):
                 time.sleep(self.sleep)
         return content
 
-    def get_wnid_list(self, fname):
-        if fname is None:
-            fname = os.path.join(ROOT_DIR, "data", "int", "synset_list.txt")
-        if not os.path.isfile(fname):
-            self.verboseprint(f"Downloading wind list...", end="")
+    def get_wnid_list(self):
+
+        filename = os.path.join("imagenet", "data", "int", "synset_list.txt")
+        if not os.path.isfile(filename):
+            log.info("Downloading WNID list")
             response = urlopen(self._synset_wnids_url)
-            with open(fname, 'wb') as f:
+            with open(filename, 'wb') as f:
                 for line in response:
                     if line.strip():
                         f.write(line)
-            self.verboseprint("completed.")
+
+    def get_wnid_maps(self):
+
+        filename = os.path.join("imagenet", "data", "int", "synset_maps.txt")
+        if not os.path.isfile(filename):
+            log.info("Downloading WNID mapping list...")
+            response = urlopen(self._synset_maps_url)
+            with open(filename, 'wb') as f:
+                for line in response:
+                    if line.strip():
+                        f.write(line)
 
     def build_url(self, url, components=None, params_extra=None):
         (scheme, netloc, path, params, query, fragment) = urlparse(url)
@@ -168,7 +192,7 @@ if __name__ == '__main__':
     p.add_argument('--path',
                    "-p",
                    type=str,
-                   default=os.path.join(ROOT_DIR, "data", "ext"),
+                   default=os.path.join(CURR_DIR, "data", "ext", "imagenet"),
                    help='Output directory')
     p.add_argument('--timeout',
                    '-t',
@@ -185,15 +209,15 @@ if __name__ == '__main__':
                    type=float,
                    default=0,
                    help='Sleep after download each image in second')
-    p.add_argument('--filename',
-                   '-f',
-                   type=str,
-                   default=os.path.join(ROOT_DIR, "data", "int", "synset_list.txt"),
-                   help='File name containing the WNIDs list')
     p.add_argument('--synset_wnids_url',
                    '-w',
                    type=str,
-                   default="http://www.image-net.org/api/text/imagenet.synset.obtain_synset_lis",
+                   default="http://www.image-net.org/api/text/imagenet.synset.obtain_synset_list",
+                   help='TBA')
+    p.add_argument('--synset_maps_url',
+                   '-m',
+                   type=str,
+                   default="http://image-net.org/archive/words.txt",
                    help='TBA')
     p.add_argument('--synset_original_url',
                    '-o',
@@ -202,6 +226,7 @@ if __name__ == '__main__':
                    help='TBA')
     p.add_argument('--verbose',
                    '-v',
+                   default=True,
                    action='store_true',
                    help='Enable verbose messages')
 
@@ -211,7 +236,7 @@ if __name__ == '__main__':
          timeout=args.timeout,
          retry=args.retry,
          sleep=args.sleep,
-         filename=args.filename,
          synset_wnids_url=args.synset_wnids_url,
+         synset_maps_url=args.synset_maps_url,
          synset_original_url=args.synset_original_url,
          verbose=args.verbose)
